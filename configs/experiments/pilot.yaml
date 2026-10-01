@@ -1,0 +1,57 @@
+# Pilot experiment: Triton FP16 matmul autotuning on a single GPU.
+# Every value is validated before any GPU work starts.
+experiment:
+  name: matmul_autotuning_pilot
+  seed: 42
+  output_dir: artifacts
+
+hardware:
+  require_cuda: true
+  record_device_metadata: true
+
+workload:
+  kernel: matmul
+  dtype: fp16
+  accumulation: fp32
+  shapes:
+    - [128, 128, 128]
+    - [512, 512, 512]
+    - [1024, 1024, 1024]
+    - [257, 511, 129]
+
+search:
+  initial_trials: 10
+  max_trials: 50
+  seeds: 5          # independent search repetitions per (shape, strategy)
+  kappa: 1.0        # exploration weight of the learned strategy (LCB)
+  strategies:
+    - random
+    - learned
+    - tpe
+
+benchmark:
+  warmup_iterations: 10
+  repetitions: 30
+  report_statistic: median
+  validate_before_timing: true
+  flush_l2: true
+
+correctness:
+  rtol: 0.01
+  atol: 0.01
+  reject_nan_inf: true
+
+collect:
+  samples_per_shape: 150
+
+# Fix these BEFORE running the final evaluation (pre-registration).
+evaluation:
+  primary_metric: best_latency_at_budget
+  within_pct: 5.0
+  bootstrap_resamples: 2000
+
+reporting:
+  include_raw_samples: true
+  include_compile_time: true
+  include_speedup: true
+  include_prediction_error: true

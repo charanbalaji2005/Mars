@@ -1,0 +1,12 @@
+# Search space for the Triton matmul kernel. Mirrors the built-in default;
+# point `search.space_file` at a copy of this file to change it.
+block_m: [16, 32, 64, 128, 256]
+block_n: [16, 32, 64, 128, 256]
+block_k: [16, 32, 64, 128]
+group_m: [1, 4, 8]
+num_warps: [2, 4, 8]
+num_stages: [2, 3, 4, 5]
+constraints:
+  max_acc_regs_per_thread: 256
+  min_acc_per_thread: 2
+  prune_oversized_blocks: true

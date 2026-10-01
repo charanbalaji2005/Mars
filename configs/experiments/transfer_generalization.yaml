@@ -1,0 +1,45 @@
+# Research question B/C: does a predictor trained on some shapes help on unseen shapes?
+#   1. neurotune collect  --config configs/experiments/transfer_generalization.yaml
+#   2. neurotune train    --dataset artifacts/transfer/matmul_trials.db
+#   3. neurotune optimize --config configs/experiments/transfer_generalization.yaml --strategy all \
+#        --prior-dataset artifacts/transfer/matmul_trials.db
+# The learned strategy never uses prior measurements of the shape it is tuning.
+experiment:
+  name: matmul_transfer_generalization
+  seed: 7
+  output_dir: artifacts/transfer
+
+workload:
+  kernel: matmul
+  dtype: fp16
+  accumulation: fp32
+  shapes:            # evaluation shapes (held out from collection below)
+    - [768, 768, 768]
+    - [2048, 256, 512]
+    - [333, 1500, 700]
+
+search:
+  initial_trials: 5
+  max_trials: 30
+  seeds: 5
+  strategies: [random, learned, tpe]
+
+benchmark:
+  warmup_iterations: 10
+  repetitions: 30
+
+collect:
+  samples_per_shape: 120
+  shapes:            # training shapes
+    - [128, 128, 128]
+    - [256, 256, 256]
+    - [512, 512, 512]
+    - [1024, 1024, 1024]
+    - [2048, 2048, 2048]
+    - [257, 511, 129]
+    - [1024, 256, 4096]
+    - [4096, 64, 1024]
+
+evaluation:
+  primary_metric: best_latency_at_budget
+  within_pct: 5.0
