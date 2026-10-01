@@ -86,8 +86,16 @@ def session(store: ExperimentStore, kind: str, config: ExperimentConfig, hardwar
         resumes = exp["notes"].get("resumes", 0) + 1
         store.update_notes(exp_id, {"resumes": resumes, **(notes or {})})
     else:
+        notes_init = dict(notes or {})
+        try:
+            from .hardware.discovery import gpu_telemetry_snapshot
+            telemetry = gpu_telemetry_snapshot()
+            if telemetry:
+                notes_init["gpu_telemetry_at_start"] = telemetry
+        except Exception:
+            pass
         exp_id = store.create_experiment(kind, config.experiment.name, config.to_dict(), hardware, _software(),
-                                         fingerprint=config.fingerprint(), notes=notes)
+                                         fingerprint=config.fingerprint(), notes=notes_init)
     add_file_handler(Path(config.experiment.output_dir) / "logs" / f"{exp_id}.jsonl")
     log_event(log, "experiment started", experiment=exp_id, kind=kind, resumed=bool(resume_id))
     try:
@@ -102,9 +110,12 @@ def session(store: ExperimentStore, kind: str, config: ExperimentConfig, hardwar
         raise
     else:
         try:
-            from .hardware.discovery import nvidia_smi_snapshot
+            from .hardware.discovery import gpu_telemetry_snapshot, nvidia_smi_snapshot
 
-            store.update_notes(exp_id, {"nvidia_smi_at_end": nvidia_smi_snapshot()})
+            store.update_notes(exp_id, {
+                "nvidia_smi_at_end": nvidia_smi_snapshot(),
+                "gpu_telemetry_at_end": gpu_telemetry_snapshot(),
+            })
         except Exception:
             pass
         store.set_status(exp_id, "complete")
@@ -181,7 +192,7 @@ def load_prior(path: str | Path, device_name: str, dtype: str) -> list[Measureme
 def run_optimize(config: ExperimentConfig, *, store: ExperimentStore, ctx: GpuContext, strategies: Sequence[str],
                  budget: int, seeds: int | None = None, initial_trials: int | None = None,
                  shapes: Sequence[Shape] | None = None, prior_dataset: str | None = None,
-                 resume_id: str | None = None) -> tuple[str, list[SearchOutcome]]:
+                 resume_id: str | None = None, kappa: float | None = None) -> tuple[str, list[SearchOutcome]]:
     unknown = [s for s in strategies if s not in STRATEGIES]
     if unknown:
         raise ConfigError(f"unknown strategies {unknown}; choose from {list(STRATEGIES)}")
@@ -189,6 +200,7 @@ def run_optimize(config: ExperimentConfig, *, store: ExperimentStore, ctx: GpuCo
         raise ConfigError("--budget must be >= 1")
     n_init = initial_trials if initial_trials is not None else config.search.initial_trials
     n_seeds = seeds or config.search.seeds
+    kappa_val = kappa if kappa is not None else config.search.kappa
     target_shapes = tuple(shapes) if shapes else config.workload.shapes
     missing = [s for s in target_shapes if s not in config.workload.shapes]
     if missing:
@@ -199,7 +211,7 @@ def run_optimize(config: ExperimentConfig, *, store: ExperimentStore, ctx: GpuCo
     space, dtype_bytes = _space(config), DTYPE_BYTES[config.workload.dtype]
     prior = load_prior(prior_dataset, ctx.runner.device_name, config.workload.dtype) if prior_dataset else None
     protocol = {"strategies": list(strategies), "budget": budget, "seeds": n_seeds, "initial_trials": n_init,
-                "kappa": config.search.kappa, "shapes": [list(s) for s in target_shapes],
+                "kappa": kappa_val, "shapes": [list(s) for s in target_shapes],
                 "prior_dataset": prior_dataset, "prior_measurements": len(prior or []),
                 "primary_metric": config.evaluation.primary_metric, "within_pct": config.evaluation.within_pct,
                 "search_space": space.to_dict()}
@@ -219,7 +231,7 @@ def run_optimize(config: ExperimentConfig, *, store: ExperimentStore, ctx: GpuCo
                     strategy = make_strategy(strategy_name, candidates, shape=shape,
                                              seed=derive_seed(seed, *shape), initial_trials=n_init,
                                              device=ctx.limits, dtype_bytes=dtype_bytes,
-                                             kappa=config.search.kappa, prior=prior)
+                                             kappa=kappa_val, prior=prior)
                     outcome = run_search(store=store, experiment_id=exp_id, runner=ctx.runner, strategy=strategy,
                                          shape=shape, dtype=config.workload.dtype, seed=seed, budget=budget,
                                          statistic=config.benchmark.report_statistic,

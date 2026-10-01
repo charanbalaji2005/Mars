@@ -42,4 +42,11 @@ def make_strategy(name: str, candidates: Sequence[KernelConfig], *, shape: Shape
     if name == "tpe":
         from .tpe_search import TPESearch
         return TPESearch(candidates, seed=seed, n_startup=initial_trials)
+    if name == "exhaustive":
+        from .exhaustive_search import ExhaustiveSearch
+        return ExhaustiveSearch(candidates, seed=seed)
+    if name == "analytical":
+        from .analytical_search import AnalyticalSearch
+        return AnalyticalSearch(candidates, shape=shape, device=device, dtype_bytes=dtype_bytes, seed=seed,
+                                initial_trials=initial_trials)
     raise ValueError(f"unknown strategy {name!r}")

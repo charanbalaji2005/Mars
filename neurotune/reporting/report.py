@@ -134,6 +134,25 @@ def generate_report(store: ExperimentStore, experiment_ids: Sequence[str], outpu
     if smi:
         md += ["nvidia-smi at start: " + ", ".join(f"{k}={v}" for k, v in smi[0].items()), ""]
 
+    t_start = exps[0]["notes"].get("gpu_telemetry_at_start")
+    t_end = exps[0]["notes"].get("gpu_telemetry_at_end")
+    if t_start and t_end:
+        temp_delta = t_end.get("temperature_c", 0) - t_start.get("temperature_c", 0)
+        sm_delta = t_end.get("clock_sm_mhz", 0) - t_start.get("clock_sm_mhz", 0)
+        pwr_delta = t_end.get("power_w", 0) - t_start.get("power_w", 0)
+        md += ["### GPU Thermal & Clock Stability", "",
+               _table(["metric", "start", "end", "drift (delta)"], [
+                   ["GPU temperature (°C)", t_start.get("temperature_c"), t_end.get("temperature_c"), f"{temp_delta:+.1f} °C"],
+                   ["SM clock (MHz)", t_start.get("clock_sm_mhz"), t_end.get("clock_sm_mhz"), f"{sm_delta:+.1f} MHz"],
+                   ["memory clock (MHz)", t_start.get("clock_mem_mhz"), t_end.get("clock_mem_mhz"),
+                    f"{(t_end.get('clock_mem_mhz', 0) - t_start.get('clock_mem_mhz', 0)):+.1f} MHz"],
+                   ["power draw (W)", t_start.get("power_w"), t_end.get("power_w"), f"{pwr_delta:+.1f} W"],
+               ]), ""]
+        if abs(sm_delta) > 100 or t_end.get("temperature_c", 0) > 82:
+            md += ["> **Warning: thermal/clock variability detected.** GPU SM clocks changed by "
+                   f"{sm_delta:+.1f} MHz and temperature reached {t_end.get('temperature_c', 0):.1f} °C. "
+                   "Keep laptop on AC power and check ventilation to prevent thermal throttling.", ""]
+
     # Protocol
     protocol = next((e["notes"].get("protocol") for e in exps if e["notes"].get("protocol")), None)
     md += ["## Protocol", "",
@@ -232,14 +251,18 @@ def generate_report(store: ExperimentStore, experiment_ids: Sequence[str], outpu
             for strat, d in per_strategy.items():
                 ok = [t for t in d["trials"] if t.ok]
                 if not ok:
-                    rows.append([strat, "no successful trial", None, None, None, None, None])
+                    rows.append([strat, "no successful trial", None, None, None, None, None, None, None])
                     continue
                 b = min(ok, key=lambda t: t.latency(statistic))
-                cv = (b.std_ms / b.mean_ms) if b.mean_ms else None
-                rows.append([strat, f"`{b.config_key}`", b.median_ms, f"{_fmt(b.p25_ms)}–{_fmt(b.p75_ms)}", cv,
-                             b.n_samples, b.first_call_s if rep.get("include_compile_time", True) else None])
-            md += [_table(["strategy", "best config (all seeds)", "median ms", "IQR ms", "CV", "samples",
-                           "first call s (incl. JIT)"], rows), ""]
+                cv = (b.std_ms / b.mean_ms * 100) if b.mean_ms else None
+                iqr = (b.p75_ms - b.p25_ms) if (b.p75_ms is not None and b.p25_ms is not None) else None
+                jit_ratio = (b.first_call_s / (b.median_ms / 1000)) if (b.first_call_s and b.median_ms) else None
+                rows.append([strat, f"`{b.config_key}`", b.median_ms, f"{_fmt(b.min_ms)}",
+                             f"{_fmt(iqr)}", f"{_fmt(cv)}%" if cv is not None else None,
+                             b.n_samples, b.first_call_s if rep.get("include_compile_time", True) else None,
+                             f"{jit_ratio:.0f}x" if jit_ratio else None])
+            md += [_table(["strategy", "best config (all seeds)", "median ms", "min ms", "IQR ms", "CV (%)", "samples",
+                           "first call s (compile)", "compile / run ratio"], rows), ""]
 
             # Overhead / break-even
             rows = []

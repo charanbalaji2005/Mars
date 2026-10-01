@@ -24,7 +24,7 @@ def _drive(strategy, limits, n):
     return seen
 
 
-@pytest.mark.parametrize("name", ["random", "learned", "tpe"])
+@pytest.mark.parametrize("name", ["random", "learned", "tpe", "exhaustive", "analytical"])
 def test_strategies_propose_unique_valid_configs(name, limits):
     cands = _cands(limits)
     s = make_strategy(name, cands, shape=SHAPE, seed=3, initial_trials=4, device=limits, dtype_bytes=2)
@@ -77,7 +77,7 @@ def test_budget_and_duplicates(tmp_path, limits):
         assert len(store.trials(experiment_ids=[exp])) == 6
 
 
-@pytest.mark.parametrize("name", ["random", "learned", "tpe"])
+@pytest.mark.parametrize("name", ["random", "learned", "tpe", "exhaustive", "analytical"])
 def test_resume_continues_to_budget(tmp_path, limits, name):
     cands = _cands(limits)
     kw = dict(shape=SHAPE, seed=5, initial_trials=3, device=limits, dtype_bytes=2)

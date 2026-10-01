@@ -73,6 +73,31 @@ def nvidia_smi_snapshot() -> list[dict[str, str]] | None:
     return rows
 
 
+def gpu_telemetry_snapshot(device_index: int = 0) -> dict[str, float] | None:
+    """Parsed numerical GPU telemetry: temperature (C), clocks (MHz), power (W), utilization (%)."""
+    rows = nvidia_smi_snapshot()
+    if not rows or device_index >= len(rows):
+        return None
+    r = rows[device_index]
+
+    def _float(key):
+        try:
+            val = r.get(key, "").replace("[Not Supported]", "").strip()
+            return float(val) if val else float("nan")
+        except (ValueError, TypeError):
+            return float("nan")
+
+    return {
+        "temperature_c": _float("temperature.gpu"),
+        "power_w": _float("power.draw"),
+        "power_limit_w": _float("power.limit"),
+        "clock_sm_mhz": _float("clocks.sm"),
+        "clock_mem_mhz": _float("clocks.mem"),
+        "clock_max_sm_mhz": _float("clocks.max.sm"),
+        "utilization_pct": _float("utilization.gpu"),
+    }
+
+
 def device_limits(device_index: int = 0) -> DeviceLimits:
     import torch
 

@@ -10,11 +10,19 @@ SMOKE_SHAPES: tuple[Shape, ...] = (
     (16, 16, 16), (64, 64, 64), (128, 128, 128), (257, 511, 129),
     (1, 1024, 7), (1000, 33, 517), (512, 512, 512),
 )
+IRREGULAR_SHAPES: tuple[Shape, ...] = (
+    (1, 1, 1), (15, 15, 15), (37, 73, 101), (257, 511, 129),
+    (1000, 33, 517), (31, 4097, 255), (1, 1024, 7),
+)
+EDGE_SHAPES: tuple[Shape, ...] = (
+    (1, 1, 1), (1, 16, 1), (16, 1, 16), (1, 1024, 7),
+    (1024, 1, 16), (16, 16, 16), (2048, 2048, 2048), (4096, 4096, 64),
+)
 FULL_SHAPES: tuple[Shape, ...] = SMOKE_SHAPES + (
     (1024, 1024, 1024), (2048, 512, 1024), (4096, 4096, 64), (31, 4097, 255),
     (768, 3072, 768), (2048, 2048, 2048),
 )
-SUITES = {"smoke": SMOKE_SHAPES, "full": FULL_SHAPES}
+SUITES = {"smoke": SMOKE_SHAPES, "full": FULL_SHAPES, "irregular": IRREGULAR_SHAPES, "edge": EDGE_SHAPES}
 _TORCH_DTYPES = {"fp16": "float16", "bf16": "bfloat16"}
 
 

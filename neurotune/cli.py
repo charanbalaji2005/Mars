@@ -47,12 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     v = sub.add_parser("validate", help="kernel correctness tests (no timing)")
     v.add_argument("--kernel", default="matmul", choices=["matmul"])
-    v.add_argument("--suite", default="smoke", choices=["smoke", "full"])
+    v.add_argument("--suite", default="smoke", choices=["smoke", "full", "irregular", "edge"])
+    v.add_argument("--dtype", choices=["fp16", "bf16"], help="override dtype for correctness checking")
     v.add_argument("--configs-per-shape", type=int, default=4, help="sampled configs in addition to the default")
     v.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="tolerances and dtype are read from here")
 
     b = sub.add_parser("benchmark", help="benchmark the default config and torch.matmul")
     b.add_argument("--config", default=DEFAULT_CONFIG_PATH)
+    b.add_argument("--dtype", choices=["fp16", "bf16"], help="override dtype for benchmarking")
 
     c = sub.add_parser("collect", help="collect a dataset of measured configurations")
     c.add_argument("--config", default=DEFAULT_CONFIG_PATH)
@@ -68,11 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--seed", type=int, default=0)
 
     o = sub.add_parser("optimize", help="run a search strategy under a fixed GPU-trial budget")
-    o.add_argument("--strategy", required=True, choices=["random", "learned", "tpe", "all"])
+    o.add_argument("--strategy", required=True, choices=["random", "learned", "tpe", "exhaustive", "analytical", "all"])
     o.add_argument("--budget", type=_positive, help="GPU trials per (shape, seed); default: search.max_trials")
     o.add_argument("--config", default=DEFAULT_CONFIG_PATH)
     o.add_argument("--seeds", type=_positive, help="independent repetitions; default: search.seeds")
     o.add_argument("--initial-trials", type=_positive)
+    o.add_argument("--kappa", type=float, default=None, help="exploration weight kappa for learned search LCB acquisition")
     o.add_argument("--shape", type=_shape, action="append", dest="shapes", help="restrict to a shape (repeatable)")
     o.add_argument("--prior-dataset", help="database whose collect trials (other shapes only) warm-start learned search")
     o.add_argument("--resume", metavar="EXPERIMENT_ID")
@@ -111,20 +114,24 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_validate(args) -> int:
+    from dataclasses import replace
     from .config import load_config
     from .experiments import gpu_context, run_validate
     from .workloads.matmul import SUITES
 
     config = load_config(args.config)
+    if getattr(args, "dtype", None):
+        wl = replace(config.workload, dtype=args.dtype)
+        config = replace(config, workload=wl)
     ctx = gpu_context(config)
     results = run_validate(config, ctx=ctx, shapes=SUITES[args.suite], sampled_configs=args.configs_per_shape)
     failed = [r for r in results if r["status"] != "ok"]
     for r in results:
         mark = "PASS" if r["status"] == "ok" else "FAIL"
         print(f"  {mark}  {'x'.join(map(str, r['shape'])):<16} {r['config']:<32} "
-              f"max_abs_err={r['max_abs_err'] if r['max_abs_err'] is not None else '—'}"
+              f"max_abs_err={r['max_abs_err'] if r['max_abs_err'] is not None else '-'}"
               + (f"  [{r['status']}] {r['error']}" if r["status"] != "ok" else ""))
-    out = Path(config.experiment.output_dir) / "validation" / f"{args.kernel}_{args.suite}.json"
+    out = Path(config.experiment.output_dir) / "validation" / f"{args.kernel}_{args.suite}_{config.workload.dtype}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"device": ctx.limits.to_dict(), "results": results}, indent=2))
     print(f"\n{len(results) - len(failed)}/{len(results)} passed · details: {out}")
@@ -139,10 +146,14 @@ def _with_store(config):
 
 
 def cmd_benchmark(args) -> int:
+    from dataclasses import replace
     from .config import load_config
     from .experiments import gpu_context, run_benchmark
 
     config = load_config(args.config)
+    if getattr(args, "dtype", None):
+        wl = replace(config.workload, dtype=args.dtype)
+        config = replace(config, workload=wl)
     ctx = gpu_context(config)
     with _with_store(config) as store:
         exp_id = run_benchmark(config, store=store, ctx=ctx)
@@ -206,7 +217,8 @@ def cmd_optimize(args) -> int:
     with _with_store(config) as store:
         exp_id, outcomes = run_optimize(config, store=store, ctx=ctx, strategies=strategies, budget=budget,
                                         seeds=args.seeds, initial_trials=args.initial_trials, shapes=args.shapes,
-                                        prior_dataset=args.prior_dataset, resume_id=args.resume)
+                                        prior_dataset=args.prior_dataset, resume_id=args.resume,
+                                        kappa=getattr(args, "kappa", None))
     print(f"\n  {'shape':<16} {'strategy':<9} {'seed':>10} {'trials':>7} {'best ms':>10}  best config")
     for o in outcomes:
         best = f"{o.best_ms:.4f}" if o.best_ms is not None else "—"
@@ -269,6 +281,17 @@ COMMANDS = {"doctor": cmd_doctor, "validate": cmd_validate, "benchmark": cmd_ben
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.platform == "win32":
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        if hasattr(sys.stderr, "reconfigure"):
+            try:
+                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level, json_console=args.log_json)
     try:
